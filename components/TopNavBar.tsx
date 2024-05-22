@@ -19,11 +19,22 @@ import {
     ModalFooter,
     Input,
 } from "@nextui-org/react";
-import JsSIP from "jssip";
+// import useSipClient from "../lib/useSipClient";
+
+import {
+    UserAgent,
+    Registerer,
+    Inviter,
+    Invitation,
+    RegistererState,
+} from "sip.js";
+const BaseURL = "voip-76.gigonomy.in";
+const SIP_URI = "sip:1010@voip-76.gigonomy.in";
+const SIP_SERVER = "wss://voip-76.gigonomy.in:10076/ws"; // Ensure your Asterisk is using the correct WebSocket URL
+const SIP_USER = "1010";
+const SIP_PASSWORD = "1010";
 
 const TopNavBar = () => {
-    const [isMenuOpen, setIsMenuOpen] = React.useState(false);
-
     const menuItems = [
         "Profile",
         "Dashboard",
@@ -37,19 +48,18 @@ const TopNavBar = () => {
         "Log Out",
     ];
 
-    const baseURI = "voip-76.gigonomy.in";
+    const [isMenuOpen, setIsMenuOpen] = React.useState(false);
 
-    const [isRegistered, setIsRegistered] = useState(false);
+    const [userAgent, setUserAgent] = useState(null);
     const [hasMicPermission, setHasMicPermission] = useState(false);
-    const [ua, setUa] = useState(null);
+    const [registerer, setRegisterer] = useState(null);
+    const [session, setSession] = useState(null);
+    const [registered, setRegistered] = useState(false);
+    const [target, setTarget] = useState("");
     const [incomingCall, setIncomingCall] = useState(null);
-    const [activeCall, setActiveCall] = useState(null);
     const [isOnHold, setIsOnHold] = useState(false);
-    const [modalVisible, setModalVisible] = useState(false);
-    const [sipUri, setSipUri] = useState("");
 
     useEffect(() => {
-        // Function to check and request microphone permission
         const checkAndRequestMicPermission = async () => {
             try {
                 const permissionStatus = await navigator.permissions.query({
@@ -77,129 +87,404 @@ const TopNavBar = () => {
 
         checkAndRequestMicPermission();
 
-        // JsSIP Configuration
-        const socket = new JsSIP.WebSocketInterface(
-            "wss://voip-76.gigonomy.in:10076/ws"
-        );
+        if (userAgent) {
+            userAgent.delegate = {
+                onInvite: (invitation) => {
+                    setIncomingCall(invitation);
+                },
+                onCallCreated: (session) => {
+                    console.log(session);
+                },
+                onCallAnswered: (session) => {
+                    console.log(session);
+                },
+                onCallHangup: (session) => {
+                    console.log(session);
+                },
+                onCallHold: (session) => {
+                    console.log(session);
+                },
+                onCallResume: (session) => {
+                    console.log(session);
+                },
+            };
+        }
+    }, [userAgent]);
 
-        const configuration = {
-            sockets: [socket],
-            uri: "sip:1010@voip-76.gigonomy.in",
-            password: "1010",
-            extraHeaders: [ 'X-Foo: foo', 'X-Bar: bar' ],
-            // contact_uri: 'sip:1010@voip-76.gigonomy.in;X-Ast-Orig-Host=192.168.2.99',
-            // Other JsSIP configurations if needed
+    const handleRegister = async () => {
+        const uri = UserAgent.makeURI(SIP_URI);
+        const transportOptions = {
+            server: SIP_SERVER,
+            tracetraceSip: false,
+        };
+        const userAgentOptions = {
+            logConfiguration: false,
+            uri,
+            transportOptions,
+            authorizationUsername: SIP_USER,
+            authorizationPassword: SIP_PASSWORD,
+            sessionDescriptionHandlerFactoryOptions: {
+                constraints: {
+                    audio: true,
+                    video: false,
+                },
+                peerConnectionConfiguration: {
+                    bundlePolicy: "balanced",
+                    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+                    iceTransportPolicy: "all",
+                    rtcpMuxPolicy: "require",
+                },
+                peerConnectionOptions: {
+                    rtcConfiguration: {
+                        sdpSemantics: "unified-plan",
+                        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+                    },
+                    iceCheckingTimeout: 3000,
+                },
+            },
+            hackIpInContact: true,
+            autoStart: false,
+            autoStop: true,
+            register: false,
+            contactParams: {},
+            delegate: {
+                onInvite: function (sip) {
+                    setIncomingCall(sip);
+                },
+            },
         };
 
-        const phone = new JsSIP.UA(configuration);
+        const ua = new UserAgent(userAgentOptions);
+        const registerer = new Registerer(ua);
 
-        phone.on("registered", () => {
-            console.log("Registered successfully");
-        });
+        ua.start()
+            .then(() => {
+                registerer
+                    .register()
+                    .then(() => {
+                        console.log("Registered successfully");
+                        setRegistered(true);
+                    })
+                    .catch((error) =>
+                        console.error("Registration failed", error)
+                    );
+            })
+            .catch((error) => console.error("User agent start failed", error));
 
-        phone.on("unregistered", () => {
-            console.log("Unregistered successfully");
-        });
-
-        phone.on("registrationFailed", (e) => {
-            console.error("Registration failed:", e.cause);
-        });
-
-        phone.on("newRTCSession", (e) => {
-            const session = e.session;
-
-            if (session.direction === "incoming") {
-                setIncomingCall(session);
-                setModalVisible(true);
-            }
-
-            session.on("ended", () => {
-                setActiveCall(null);
-                setIsOnHold(false);
-            });
-
-            session.on("failed", () => {
-                setActiveCall(null);
-                setIsOnHold(false);
-            });
-        });
-
-        setUa(phone);
-
-        return () => {
-            if (phone) {
-                phone.stop();
-            }
-        };
-    }, []);
-
-    const handleSwitchChange = async (e) => {
-        const checked = e.target.checked;
-        setIsRegistered(checked);
-
-        if (checked && ua && hasMicPermission) {
-            ua.start();
-        } else if (ua) {
-            ua.stop();
-        }
+        setUserAgent(ua);
+        setRegisterer(registerer);
     };
-
-    const handleAcceptCall = () => {
-        if (incomingCall) {
-            incomingCall.answer({
-                mediaConstraints: { audio: true, video: false },
-            });
-            setActiveCall(incomingCall);
-            setModalVisible(false);
-        }
-    };
-
-    const handleRejectCall = () => {
-        if (incomingCall) {
-            incomingCall.terminate();
-            setIncomingCall(null);
-            setModalVisible(false);
-        }
-    };
-
-    const handleHangupCall = () => {
-        if (activeCall) {
-            activeCall.terminate();
-            setActiveCall(null);
-            setIsOnHold(false);
-        }
+    const sdpOptions = {
+        earlyMedia: true,
+        sessionDescriptionHandlerOptions: {
+            constraints: {
+                audio: {
+                    // deviceId: "default",
+                    autoGainControl: true,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                },
+                video: false,
+            },
+        },
     };
 
     const handleCall = () => {
-        if (ua && sipUri) {
-            const options = {
-                mediaConstraints: { audio: true, video: false },
+        if (!userAgent || !target) return;
+
+        const targetURI = UserAgent.makeURI(`sip:${target}@${BaseURL}`);
+        const inviter = new Inviter(userAgent, targetURI);
+
+        inviter.invite().then((session) => {
+            setSession(session);
+            session.delegate = {
+                sessionDescriptionHandler: (sessionDescriptionHandler) => {
+                    console.log(sessionDescriptionHandler);
+                },
             };
-            const newSipUri = sipUri + "@" + baseURI;
-            const session = ua.call(sipUri, options);
+        }).catch((error) => {
+            console.error("Failed to invite", error);
+        });
 
-            setActiveCall(session);
 
-            session.on("ended", () => {
-                setActiveCall(null);
-                setIsOnHold(false);
-            });
+        // sipSession.data.calldirection = "outbound";
+        // sipSession.data.dst = target;
+        // sipSession.data.terminateby = "them";
+        // sipSession.delegate = {
+        //     onBye: function (sip) {
+        //         onSessionReceivedBye(sip);
+        //     },
+        //     onMessage: function (sip) {
+        //         onSessionReceivedMessage(sip);
+        //     },
+        //     onInvite: function (sip) {
+        //         onSessionReinvited(sip);
+        //     },
+        // };
+        // var inviterOptions = {
+        //     requestDelegate: {
+        //         // OutgoingRequestDelegate
+        //         onTrying: function (sip) {
+        //             onInviteTrying(sip);
+        //         },
+        //         onProgress: function (sip) {
+        //             onInviteProgress(sip);
+        //         },
+        //         onRedirect: function (sip) {
+        //             onInviteRedirected(sip);
+        //         },
+        //         onAccept: function (sip) {
+        //             onInviteAccepted(false, sip);
+        //         },
+        //         onReject: function (sip) {
+        //             onInviteRejected(sip);
+        //         },
+        //     },
+        // };
 
-            session.on("failed", () => {
-                setActiveCall(null);
-                setIsOnHold(false);
+        // sipSession
+        //     .invite(inviterOptions)
+        //     .then((session) => {
+        //         console.log("Call initiated", session);
+        //         setSession(session);
+        //         session.delegate = {
+        //             sessionDescriptionHandler: (sessionDescriptionHandler) => {
+        //                 console.log(sessionDescriptionHandler);
+        //             },
+        //         };
+        //         // addSessionEventHandlers(session);
+        //     })
+        //     .catch(function (e) {
+        //         console.warn("Failed to send INVITE:", e);
+        //     });
+    };
+
+    const answerSDPOptions = {
+        earlyMedia: true,
+        sessionDescriptionHandlerOptions: {
+            constraints: {
+                audio: {
+                    // deviceId: "default",
+                    autoGainControl: true,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                },
+                video: false,
+            },
+        },
+    };
+    const handleAnswer = () => {
+        if (incomingCall) {
+            incomingCall
+                .accept(answerSDPOptions)
+                .then(() => {
+                    console.log(incomingCall);
+                    setSession(incomingCall);
+                    incomingCall.delegate = {
+                        onSessionDescriptionHandler: (
+                            sessionDescriptionHandler
+                        ) => {
+                            sessionDescriptionHandler.on(
+                                "setDescription",
+                                () => {
+                                    console.log("Call SDP set");
+                                    // handleHoldResumeButtonVisibility(incomingCall);
+                                }
+                            );
+                        },
+                    };
+                    setIncomingCall(null);
+                    // addSessionEventHandlers(incomingCall);
+                })
+                .catch((error) => console.error("Answer failed", error));
+        }
+    };
+
+    const handleHangup = () => {
+        if (session) {
+            session
+                .bye()
+                .then(() => {
+                    console.log("Call ended");
+                    setSession(null);
+                })
+                .catch((error) => console.error("Hangup failed", error));
+            // console.log("Call ended");
+            // setSession(null);
+        }
+    };
+
+    const handleHold = () => {
+        console.log(session);
+
+        if (session) {
+            if (session.isOnHold == true) {
+                console.log("Call is is already on hold:", session);
+                setIsOnHold(true);
+                return;
+            }
+            let sessionDescriptionHandlerOptions =
+                session.sessionDescriptionHandlerOptionsReInvite;
+            sessionDescriptionHandlerOptions.hold = true;
+            session.sessionDescriptionHandlerOptionsReInvite =
+                sessionDescriptionHandlerOptions;
+
+            let options = {
+                requestDelegate: {
+                    onAccept: function () {
+                        if (
+                            session &&
+                            session.sessionDescriptionHandler &&
+                            session.sessionDescriptionHandler.peerConnection
+                        ) {
+                            setIsOnHold(true);
+                            let pc =
+                                session.sessionDescriptionHandler
+                                    .peerConnection;
+                            // Stop all the inbound streams
+                            pc.getReceivers().forEach(function (
+                                RTCRtpReceiver
+                            ) {
+                                if (RTCRtpReceiver.track)
+                                    RTCRtpReceiver.track.enabled = false;
+                            });
+                            // Stop all the outbound streams (especially useful for Conference Calls!!)
+                            pc.getSenders().forEach(function (RTCRtpSender) {
+                                // Mute Audio
+                                if (
+                                    RTCRtpSender.track &&
+                                    RTCRtpSender.track.kind == "audio"
+                                ) {
+                                    if (
+                                        RTCRtpSender.track.IsMixedTrack == true
+                                    ) {
+                                        if (
+                                            session.data.AudioSourceTrack &&
+                                            session.data.AudioSourceTrack
+                                                .kind == "audio"
+                                        ) {
+                                            console.log(
+                                                "Muting Mixed Audio Track : " +
+                                                    session.data
+                                                        .AudioSourceTrack.label
+                                            );
+                                            session.data.AudioSourceTrack.enabled =
+                                                false;
+                                        }
+                                    }
+                                    console.log(
+                                        "Muting Audio Track : " +
+                                            RTCRtpSender.track.label
+                                    );
+                                    RTCRtpSender.track.enabled = false;
+                                }
+                            });
+                        }
+                        session.isOnHold = true;
+                        console.log("Call is is on hold:", session);
+                    },
+                    onReject: function () {
+                        session.isOnHold = false;
+                        console.warn(
+                            "Failed to put the call on hold:",
+                            session
+                        );
+                    },
+                },
+            };
+            session.invite(options).catch(function (error) {
+                session.isOnHold = false;
+                console.warn(
+                    "Error attempting to put the call on hold:",
+                    error
+                );
             });
         }
     };
 
-    const handleHoldCall = () => {
-        if (activeCall) {
-            if (isOnHold) {
-                activeCall.unhold();
-            } else {
-                activeCall.hold();
+    const handleResume = () => {
+        if (session) {
+            if (session.isOnHold == false) {
+                console.log("Call is already off hold:", session);
+                setIsOnHold(false);
+                return;
             }
-            setIsOnHold(!isOnHold);
+
+            session.isOnHold = false;
+
+            let sessionDescriptionHandlerOptions =
+                session.sessionDescriptionHandlerOptionsReInvite;
+            sessionDescriptionHandlerOptions.hold = false;
+            session.sessionDescriptionHandlerOptionsReInvite =
+                sessionDescriptionHandlerOptions;
+
+            let options = {
+                requestDelegate: {
+                    onAccept: function () {
+                        if (
+                            session &&
+                            session.sessionDescriptionHandler &&
+                            session.sessionDescriptionHandler.peerConnection
+                        ) {
+                            setIsOnHold(false);
+                            let pc =
+                                session.sessionDescriptionHandler
+                                    .peerConnection;
+                            // Restore all the inbound streams
+                            pc.getReceivers().forEach(function (
+                                RTCRtpReceiver
+                            ) {
+                                if (RTCRtpReceiver.track)
+                                    RTCRtpReceiver.track.enabled = true;
+                            });
+                            // Restore all the outbound streams
+                            pc.getSenders().forEach(function (RTCRtpSender) {
+                                // Unmute Audio
+                                if (
+                                    RTCRtpSender.track &&
+                                    RTCRtpSender.track.kind == "audio"
+                                ) {
+                                    if (
+                                        RTCRtpSender.track.IsMixedTrack == true
+                                    ) {
+                                        if (
+                                            session.data.AudioSourceTrack &&
+                                            session.data.AudioSourceTrack
+                                                .kind == "audio"
+                                        ) {
+                                            console.log(
+                                                "Unmuting Mixed Audio Track : " +
+                                                    session.data
+                                                        .AudioSourceTrack.label
+                                            );
+                                            session.data.AudioSourceTrack.enabled =
+                                                true;
+                                        }
+                                    }
+                                    console.log(
+                                        "Unmuting Audio Track : " +
+                                            RTCRtpSender.track.label
+                                    );
+                                    RTCRtpSender.track.enabled = true;
+                                }
+                            });
+                        }
+                        session.isOnHold = false;
+                        console.log("Call is off hold:", session);
+                    },
+                    onReject: function () {
+                        session.isOnHold = true;
+                        console.warn("Failed to put the call on hold", session);
+                    },
+                },
+            };
+            session.invite(options).catch(function (error) {
+                session.isOnHold = true;
+                console.warn(
+                    "Error attempting to take to call off hold",
+                    error
+                );
+            });
         }
     };
 
@@ -254,60 +539,56 @@ const TopNavBar = () => {
             </NavbarContent>
 
             <NavbarContent justify="end">
+                {!registered ? (
+                    <Button onClick={handleRegister}>Register</Button>
+                ) : (
+                    <>
+                        <NavbarItem className="hidden lg:flex">
+                            {incomingCall && (
+                                <Button onClick={handleAnswer}>Answer</Button>
+                            )}
+                            {session ? (
+                                <>
+                                    {isOnHold ? (
+                                        <Button onClick={handleResume}>
+                                            Resume
+                                        </Button>
+                                    ) : (
+                                        <Button onClick={handleHold}>
+                                            Hold
+                                        </Button>
+                                    )}
+                                    <Button
+                                        color="danger"
+                                        onClick={handleHangup}
+                                    >
+                                        Hang Up
+                                    </Button>
+                                </>
+                            ) : (
+                                !incomingCall && (
+                                    <>
+                                        <Input
+                                            placeholder="Emter Phone Number"
+                                            value={target}
+                                            onChange={(e) =>
+                                                setTarget(e.target.value)
+                                            }
+                                        />
+                                        <Button
+                                            color="primary"
+                                            onClick={handleCall}
+                                        >
+                                            Call
+                                        </Button>
+                                    </>
+                                )
+                            )}
+                        </NavbarItem>
+                    </>
+                )}
                 <NavbarItem className="hidden lg:flex">
-                    <Input
-                        placeholder="Emter Phone Number"
-                        value={sipUri}
-                        onChange={(e) => setSipUri(e.target.value)}
-                    />
-                    <Button
-                        color="primary"
-                        onClick={handleCall}
-                        disabled={!isRegistered || !hasMicPermission}
-                    >
-                        Call
-                    </Button>
-                </NavbarItem>
-                <NavbarItem className="hidden lg:flex">
-                    <Switch
-                        checked={isRegistered}
-                        onChange={handleSwitchChange}
-                        color="primary"
-                    />
-                    {activeCall && (
-                        <>
-                            <Button color="danger" onClick={handleHangupCall}>
-                                Hang Up
-                            </Button>
-                            <Button color="warning" onClick={handleHoldCall}>
-                                {isOnHold ? "Resume" : "Hold"}
-                            </Button>
-                        </>
-                    )}
-                    <Modal
-                        closeButton
-                        aria-labelledby="modal-title"
-                        isOpen={modalVisible}
-                        onClose={handleRejectCall}
-                    >
-                        <ModalHeader>Incoming Call</ModalHeader>
-                        <ModalBody>
-                            You have an incoming call. Do you want to accept it?
-                        </ModalBody>
-                        <ModalFooter>
-                            <Button color="danger" onClick={handleRejectCall}>
-                                Reject
-                            </Button>
-                            <Button onClick={handleAcceptCall}>Accept</Button>
-                        </ModalFooter>
-                    </Modal>
-                </NavbarItem>
-                <NavbarItem className="hidden lg:flex">
-                    {isRegistered
-                        ? activeCall
-                            ? "Active Call"
-                            : "Registered"
-                        : "Unregistered"}
+                    {session ? "On Call" : "Registerd"}
                 </NavbarItem>
                 <NavbarItem className="hidden lg:flex">
                     <Link href="#">Login</Link>
