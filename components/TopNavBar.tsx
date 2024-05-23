@@ -15,6 +15,7 @@ import {
 } from "@nextui-org/react";
 import JsSIP from "jssip";
 
+//Top Navigarion Bar
 const TopNavBar = () => {
     const [isMenuOpen, setIsMenuOpen] = React.useState(false);
 
@@ -56,8 +57,6 @@ const TopNavBar = () => {
         },
     };
 
-    // JsSIP.debug.enable("JsSIP:*");
-
     useEffect(() => {
         // Function to check and request microphone permission
         const checkAndRequestMicPermission = async () => {
@@ -96,9 +95,9 @@ const TopNavBar = () => {
             sockets: [socket],
             uri: "sip:1010@voip-76.gigonomy.in",
             password: "1010",
-            extraHeaders: ["X-Foo: foo", "X-Bar: bar"],
-            // contact_uri: 'sip:1010@voip-76.gigonomy.in;X-Ast-Orig-Host=192.168.2.99',
-            // Other JsSIP configurations if needed
+            realm:'voip-76.gigonomy.in',
+            display_name:'1010',
+            contact_uri: 'sip:1010@192.168.2.161:10076',
         };
 
         const phone = new JsSIP.UA(configuration);
