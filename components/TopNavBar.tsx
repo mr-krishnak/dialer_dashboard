@@ -11,12 +11,6 @@ import {
     NavbarItem,
     Link,
     Button,
-    Switch,
-    Modal,
-    ModalContent,
-    ModalHeader,
-    ModalBody,
-    ModalFooter,
     Input,
 } from "@nextui-org/react";
 import JsSIP from "jssip";
@@ -45,8 +39,24 @@ const TopNavBar = () => {
     const [incomingCall, setIncomingCall] = useState(null);
     const [activeCall, setActiveCall] = useState(null);
     const [isOnHold, setIsOnHold] = useState(false);
-    const [modalVisible, setModalVisible] = useState(false);
+    const [answerCallBtn, setAnswerCallBtn] = useState(false);
     const [sipUri, setSipUri] = useState("");
+
+    const rtcAnswerConstraints = {
+        mandatory: {
+            OfferToReceiveAudio: true,
+            OfferToReceiveVideo: false,
+        },
+    };
+
+    const rtcOfferConstraints = {
+        mandatory: {
+            OfferToReceiveAudio: true,
+            OfferToReceiveVideo: false,
+        },
+    };
+
+    // JsSIP.debug.enable("JsSIP:*");
 
     useEffect(() => {
         // Function to check and request microphone permission
@@ -86,7 +96,7 @@ const TopNavBar = () => {
             sockets: [socket],
             uri: "sip:1010@voip-76.gigonomy.in",
             password: "1010",
-            extraHeaders: [ 'X-Foo: foo', 'X-Bar: bar' ],
+            extraHeaders: ["X-Foo: foo", "X-Bar: bar"],
             // contact_uri: 'sip:1010@voip-76.gigonomy.in;X-Ast-Orig-Host=192.168.2.99',
             // Other JsSIP configurations if needed
         };
@@ -94,10 +104,12 @@ const TopNavBar = () => {
         const phone = new JsSIP.UA(configuration);
 
         phone.on("registered", () => {
+            setIsRegistered(true);
             console.log("Registered successfully");
         });
 
         phone.on("unregistered", () => {
+            setIsRegistered(false);
             console.log("Unregistered successfully");
         });
 
@@ -106,21 +118,51 @@ const TopNavBar = () => {
         });
 
         phone.on("newRTCSession", (e) => {
-            const session = e.session;
+            const sipSession = e.session;
 
-            if (session.direction === "incoming") {
-                setIncomingCall(session);
-                setModalVisible(true);
+            if (sipSession.direction === "incoming") {
+                setIncomingCall(sipSession);
+                setAnswerCallBtn(true);
             }
 
-            session.on("ended", () => {
+            sipSession.on("confirmed", () => {
+                setActiveCall(sipSession);
+                setIsOnHold(false);
+            });
+
+            sipSession.on("ended", () => {
+                console.log("end");
                 setActiveCall(null);
                 setIsOnHold(false);
             });
 
-            session.on("failed", () => {
+            sipSession.on("failed", () => {
+                console.log("failed");
                 setActiveCall(null);
                 setIsOnHold(false);
+                setAnswerCallBtn(false);
+            });
+
+            sipSession.on("peerconnection", () => {
+                console.log("peerconnection", sipSession);
+                sipSession.connection.ontrack = (event) => {
+                    const remoteStream = event.streams[0];
+                    // Attach the remote stream to an audio element to listen to the hold music
+                    const audioElement = document.getElementById("remoteAudio");
+                    if (audioElement) {
+                        audioElement.srcObject = remoteStream;
+                    }
+                };
+
+                sipSession.on("hold", () => {
+                    console.log("Call is on hold");
+                    setIsOnHold(true);
+                });
+
+                sipSession.on("unhold", () => {
+                    console.log("Call is resumed");
+                    setIsOnHold(false);
+                });
             });
         });
 
@@ -133,13 +175,13 @@ const TopNavBar = () => {
         };
     }, []);
 
-    const handleSwitchChange = async (e) => {
-        const checked = e.target.checked;
-        setIsRegistered(checked);
-
-        if (checked && ua && hasMicPermission) {
+    const handleRegister = () => {
+        if (ua && hasMicPermission) {
             ua.start();
-        } else if (ua) {
+        }
+    };
+    const handleUnregister = () => {
+        if (ua) {
             ua.stop();
         }
     };
@@ -147,10 +189,21 @@ const TopNavBar = () => {
     const handleAcceptCall = () => {
         if (incomingCall) {
             incomingCall.answer({
-                mediaConstraints: { audio: true, video: false },
+                mediaConstraints: {
+                    audio: {
+                        mandatory: {
+                            googEchoCancellation: true,
+                            googAutoGainControl: true,
+                            googNoiseSuppression: true,
+                            googHighpassFilter: true,
+                        },
+                    },
+                    video: false,
+                },
+                rtcAnswerConstraints,
             });
             setActiveCall(incomingCall);
-            setModalVisible(false);
+            setAnswerCallBtn(false);
         }
     };
 
@@ -158,7 +211,7 @@ const TopNavBar = () => {
         if (incomingCall) {
             incomingCall.terminate();
             setIncomingCall(null);
-            setModalVisible(false);
+            setAnswerCallBtn(false);
         }
     };
 
@@ -170,24 +223,89 @@ const TopNavBar = () => {
         }
     };
 
+    var eventHandlers = {
+        progress: function (e) {
+            /* Your code here */
+            console.log("progress", e);
+        },
+        failed: function (e) {
+            /* Your code here */
+            console.log("failed", e);
+        },
+        confirmed: function (e) {
+            console.log("confirmed", e);
+        },
+        ended: function (e) {
+            /* Your code here */
+            console.log("ended", e);
+        },
+    };
+
     const handleCall = () => {
         if (ua && sipUri) {
             const options = {
-                mediaConstraints: { audio: true, video: false },
+                eventHandlers: eventHandlers,
+                mediaConstraints: {
+                    audio: {
+                        mandatory: {
+                            googEchoCancellation: true,
+                            googAutoGainControl: true,
+                            googNoiseSuppression: true,
+                            googHighpassFilter: true,
+                        },
+                    },
+                    video: false,
+                },
+                rtcOfferConstraints,
+                rtcAnswerConstraints,
+                pcConfig: {
+                    iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+                    rtcpMuxPolicy: "require",
+                    bundlePolicy: "max-bundle",
+                },
+                sdpSemantics: "unified-plan",
             };
             const newSipUri = sipUri + "@" + baseURI;
-            const session = ua.call(sipUri, options);
+            const sipSession = ua.call(newSipUri, options);
 
-            setActiveCall(session);
+            if (sipSession) {
+                sipSession.connection.addEventListener("addstream", (e) => {
+                    const remoteStream = e.stream;
+                    const audioElement = document.getElementById("remoteAudio");
+                    if (audioElement) {
+                        audioElement.srcObject = remoteStream;
+                    }
+                });
+            }
 
-            session.on("ended", () => {
+            setActiveCall(sipSession);
+
+            sipSession.on("ended", (evt) => {
+                console.log("Session ended", evt);
                 setActiveCall(null);
                 setIsOnHold(false);
             });
 
-            session.on("failed", () => {
+            sipSession.on("failed", (evt) => {
+                console.log("Session failed", evt);
                 setActiveCall(null);
                 setIsOnHold(false);
+            });
+
+            sipSession.on("accepted", (evt) => {
+                console.log("Session accepted", evt);
+            });
+
+            sipSession.on("confirmed", (evt) => {
+                console.log("Session confirmed", sipSession);
+            });
+
+            sipSession.on("hold", (evt) => {
+                console.log("Session is hold");
+            });
+
+            sipSession.on("unhold", (evt) => {
+                console.log("Session is resumed");
             });
         }
     };
@@ -254,61 +372,73 @@ const TopNavBar = () => {
             </NavbarContent>
 
             <NavbarContent justify="end">
-                <NavbarItem className="hidden lg:flex">
-                    <Input
-                        placeholder="Emter Phone Number"
-                        value={sipUri}
-                        onChange={(e) => setSipUri(e.target.value)}
-                    />
-                    <Button
-                        color="primary"
-                        onClick={handleCall}
-                        disabled={!isRegistered || !hasMicPermission}
-                    >
-                        Call
-                    </Button>
-                </NavbarItem>
-                <NavbarItem className="hidden lg:flex">
-                    <Switch
-                        checked={isRegistered}
-                        onChange={handleSwitchChange}
-                        color="primary"
-                    />
-                    {activeCall && (
-                        <>
+                {isRegistered && !activeCall && !answerCallBtn && (
+                    <NavbarItem className="hidden lg:flex">
+                        <Input
+                            placeholder="Emter Phone Number"
+                            value={sipUri}
+                            color="primary"
+                            onChange={(e) => setSipUri(e.target.value)}
+                        />
+                        <Button
+                            color="success"
+                            onClick={handleCall}
+                            disabled={!isRegistered || !hasMicPermission}
+                        >
+                            Call
+                        </Button>
+                    </NavbarItem>
+                )}
+                {activeCall && (
+                    <>
+                        <NavbarItem className="hidden lg:flex">
                             <Button color="danger" onClick={handleHangupCall}>
                                 Hang Up
                             </Button>
-                            <Button color="warning" onClick={handleHoldCall}>
+                        </NavbarItem>
+                        <NavbarItem className="hidden lg:flex">
+                            <Button
+                                color={isOnHold ? "success" : "warning"}
+                                onClick={handleHoldCall}
+                            >
                                 {isOnHold ? "Resume" : "Hold"}
                             </Button>
-                        </>
-                    )}
-                    <Modal
-                        closeButton
-                        aria-labelledby="modal-title"
-                        isOpen={modalVisible}
-                        onClose={handleRejectCall}
-                    >
-                        <ModalHeader>Incoming Call</ModalHeader>
-                        <ModalBody>
-                            You have an incoming call. Do you want to accept it?
-                        </ModalBody>
-                        <ModalFooter>
+                        </NavbarItem>
+                        <audio id="remoteAudio" autoPlay></audio>
+                    </>
+                )}
+                {answerCallBtn && (
+                    <>
+                        <NavbarItem className="hidden lg:flex">
+                            <Button color="success" onClick={handleAcceptCall}>
+                                Accept
+                            </Button>
+                        </NavbarItem>
+                        <NavbarItem className="hidden lg:flex">
                             <Button color="danger" onClick={handleRejectCall}>
                                 Reject
                             </Button>
-                            <Button onClick={handleAcceptCall}>Accept</Button>
-                        </ModalFooter>
-                    </Modal>
-                </NavbarItem>
-                <NavbarItem className="hidden lg:flex">
-                    {isRegistered
-                        ? activeCall
-                            ? "Active Call"
-                            : "Registered"
-                        : "Unregistered"}
-                </NavbarItem>
+                        </NavbarItem>
+                    </>
+                )}
+                {!activeCall && !answerCallBtn && (
+                    <NavbarItem className="hidden lg:flex">
+                        {isRegistered ? (
+                            <Button onClick={handleUnregister} color="primary">
+                                Unregister Phone
+                            </Button>
+                        ) : (
+                            <Button onClick={handleRegister} color="primary">
+                                Register Phone
+                            </Button>
+                        )}
+                    </NavbarItem>
+                )}
+                {activeCall && (
+                    <NavbarItem className="hidden lg:flex">
+                        Active Call
+                    </NavbarItem>
+                )}
                 <NavbarItem className="hidden lg:flex">
                     <Link href="#">Login</Link>
                 </NavbarItem>
